@@ -89,10 +89,7 @@ function App() {
     if (savedTasks) {
       tasks = JSON.parse(savedTasks);
     } else {
-      tasks = [
-        { text: 'Write prompt for AI', completed: false },
-        { text: 'Prepare coffee', completed: false }
-      ];
+      tasks = [];
     }
     
     // Only add "fatihi aramak" task if current theme is "irem"
