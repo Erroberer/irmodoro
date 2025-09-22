@@ -154,41 +154,50 @@ class IrmodoroDatabase {
     });
   }
 
-  // Get daily stats for last 7 days
+  // Get weekly statistics for the last 7 days
   async getWeeklyStats() {
     if (!this.db) await this.init();
 
-    const dates = [];
-    for (let i = 6; i >= 0; i--) {
+    const stats = [];
+    
+    // Get today's day of week (0 = Sunday, 1 = Monday, etc.)
+    const today = new Date();
+    const todayDayOfWeek = today.getDay();
+    
+    // Calculate how many days back to Monday (1)
+    // If today is Sunday (0), we need to go back 6 days to get to Monday
+    // If today is Monday (1), we need to go back 0 days
+    // If today is Tuesday (2), we need to go back 1 day, etc.
+    const daysBackToMonday = todayDayOfWeek === 0 ? 6 : todayDayOfWeek - 1;
+    
+    // Start from Monday of this week and go forward 7 days
+    for (let i = 0; i < 7; i++) {
       const date = new Date();
-      date.setDate(date.getDate() - i);
-      dates.push(date.toDateString());
+      date.setDate(date.getDate() - daysBackToMonday + i);
+      const dateString = date.toDateString();
+      
+      stats.push({
+        date: date, // Date object for getDayName function
+        dateString: dateString, // String for database key
+        duration: 0 // Will be filled from database
+      });
     }
 
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction(['dailyStats'], 'readonly');
       const store = transaction.objectStore('dailyStats');
 
-      const promises = dates.map(date => {
+      const promises = stats.map(stat => {
         return new Promise((res) => {
-          const request = store.get(date);
+          const request = store.get(stat.dateString);
           request.onsuccess = () => {
-            res(request.result || {
-              date,
-              totalWorkTime: 0,
-              totalSessions: 0,
-              totalTasks: 0,
-              averageSessionLength: 0
-            });
+            const result = request.result;
+            stat.duration = result ? result.totalWorkTime : 0;
+            res(stat);
           };
           request.onerror = () => {
-            res({
-              date,
-              totalWorkTime: 0,
-              totalSessions: 0,
-              totalTasks: 0,
-              averageSessionLength: 0
-            });
+            stat.duration = 0;
+            res(stat);
           };
         });
       });

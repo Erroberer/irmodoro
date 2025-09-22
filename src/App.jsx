@@ -86,6 +86,7 @@ function App() {
   const [showStatistics, setShowStatistics] = useState(false)
   const [weeklyStats, setWeeklyStats] = useState([])
   const [currentSession, setCurrentSession] = useState(null)
+  const [todayWorkTime, setTodayWorkTime] = useState(0)
   
   // Load tasks from localStorage
   const loadTasks = () => {
@@ -210,12 +211,43 @@ function App() {
   const progress = ((isWorkSession ? workTime * 60 : restTime * 60) - timeLeft) / (isWorkSession ? workTime * 60 : restTime * 60)
   const strokeDashoffset = circumference - (progress * circumference)
 
-  // Timer effect
+  // Timer effect with real-time data processing
   useEffect(() => {
     let interval = null;
     if (isRunning && !isPaused && timeLeft > 0) {
-      interval = setInterval(() => {
+      interval = setInterval(async () => {
         setTimeLeft(timeLeft => timeLeft - 1);
+        
+        // Real-time data processing for work sessions
+        if (isWorkSession && currentSession) {
+          try {
+            // Update current session duration in real-time
+            const now = new Date();
+            const duration = Math.floor((now - currentSession.startTime) / 1000);
+            
+            // Update current session state
+            setCurrentSession(prev => ({
+              ...prev,
+              currentDuration: duration
+            }));
+            
+            // Update daily stats every 10 seconds to avoid too frequent updates
+            if (duration % 10 === 0) {
+              const today = new Date().toDateString();
+              await database.updateDailyStats(today);
+              
+              // Refresh weekly stats
+              const stats = await database.getWeeklyStats();
+              setWeeklyStats(stats);
+              
+              // Update today's work time for button display
+              const todayStats = stats.find(stat => stat.dateString === today);
+              setTodayWorkTime(todayStats ? todayStats.duration : 0);
+            }
+          } catch (error) {
+            console.error('Real-time data processing error:', error);
+          }
+        }
       }, 1000);
     } else if (timeLeft === 0) {
       // Session completed
@@ -404,6 +436,12 @@ function App() {
     try {
       const stats = await database.getWeeklyStats();
       setWeeklyStats(stats);
+      
+      // Update today's work time
+      const today = new Date().toDateString();
+      const todayStats = stats.find(stat => stat.dateString === today);
+      setTodayWorkTime(todayStats ? todayStats.duration : 0);
+      
       setShowStatistics(true);
     } catch (error) {
       console.error('Error loading statistics:', error);
@@ -425,9 +463,9 @@ function App() {
     return `${minutes}d`;
   };
 
-  // Get day name in Turkish
+  // Get day name in Turkish with short abbreviations
   const getDayName = (date) => {
-    const days = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+    const days = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
     return days[date.getDay()];
   };
 
@@ -576,7 +614,7 @@ function App() {
               <button 
                 className="statistics-btn"
                 onClick={openStatistics}
-                title="Haftalık İstatistikler"
+                title="Bugün Kaç Dakika Çalışıldığı"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M3 3v18h18"/>
@@ -584,19 +622,19 @@ function App() {
                   <path d="M13 17V5"/>
                   <path d="M8 17v-3"/>
                 </svg>
-                İstatistikler
+                {Math.round(todayWorkTime / 60)}dk çalışıldı
               </button>
               <button 
                 className={`mode-btn ${mode === 'work' ? 'active' : ''}`}
                 onClick={() => handleModeChange('work')}
               >
-                Work ({workTime}{workTimeInSeconds ? 's' : 'm'})
+                Çalışma ({workTime}{workTimeInSeconds ? 's' : 'd'})
               </button>
               <button 
                 className={`mode-btn ${mode === 'rest' ? 'active' : ''}`}
                 onClick={() => handleModeChange('rest')}
               >
-                {theme === 'irem' ? 'Fatihe yazmaya kalan vakit' : `Rest (${restTime}${restTimeInSeconds ? 's' : 'm'})`}
+                {theme === 'irem' ? 'Fatihe yazmaya kalan vakit' : `Dinlenme (${restTime}${restTimeInSeconds ? 's' : 'd'})`}
               </button>
             </div>
           </div>
@@ -629,7 +667,7 @@ function App() {
                 </svg>
                 <div className="timer-content">
                   <div className="time">{formatTime(timeLeft)}</div>
-                  <div className="timer-label">Pomodoro Timer</div>
+                  <div className="timer-label">Pomodoro Zamanlayıcı</div>
                 </div>
               </div>
             </div>
@@ -670,12 +708,12 @@ function App() {
 
         <div className="tasks-section">
           <div className="tasks-header">
-            <button className="add-task-btn" onClick={addTask}>+ Add Task</button>
+            <button className="add-task-btn" onClick={addTask}>+ Görev Ekle</button>
           </div>
           <div className="tasks-list">
             {tasks.map((task, index) => (
               <div key={index} className="task-item">
-                <span className="task-number">Task {index + 1}</span>
+                <span className="task-number">Görev {index + 1}</span>
                 {editingTaskIndex === index ? (
                   <input
                     type="text"
@@ -688,7 +726,7 @@ function App() {
                         finishEditingTask();
                       }
                     }}
-                    placeholder="Enter task..."
+                    placeholder="Görev girin..."
                     autoFocus
                   />
                 ) : (
@@ -696,7 +734,7 @@ function App() {
                     className={`task-text ${task.completed ? 'completed' : ''} ${task.text === '' ? 'empty' : ''}`}
                     onClick={() => startEditingTask(index)}
                   >
-                    {task.text || 'Click to add task...'}
+                    {task.text || 'Görev eklemek için tıklayın...'}
                   </span>
                 )}
                 <button 
@@ -715,7 +753,7 @@ function App() {
             ))}
             {tasks.length === 0 && (
               <div className="no-tasks">
-                No tasks yet. Add one to get started!
+                Henüz görev yok. Başlamak için bir tane ekleyin!
               </div>
             )}
           </div>
@@ -735,14 +773,14 @@ function App() {
             onClick={() => selectTheme('light')}
           >
             <span className="theme-icon">☀️</span>
-            <span className="theme-name">Light</span>
+            <span className="theme-name">Açık</span>
           </button>
           <button 
             className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
             onClick={() => selectTheme('dark')}
           >
             <span className="theme-icon">🌙</span>
-            <span className="theme-name">Dark</span>
+            <span className="theme-name">Koyu</span>
           </button>
           <button 
             className={`theme-option ${theme === 'irem' ? 'active' : ''}`}
@@ -758,32 +796,32 @@ function App() {
       {showSettings && (
         <div className="modal-backdrop" onClick={closeSettings}>
           <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Settings</h2>
+            <h2>Ayarlar</h2>
             
             <div className="settings-group">
-              <label>Working Time:</label>
+              <label>Çalışma Süresi:</label>
               <input
                 type="text"
                 value={tempWorkTime + (workTimeInSeconds ? 's' : '')}
                 onChange={(e) => handleWorkTimeChange(e.target.value)}
                 placeholder="25 or 30s"
               />
-              <span className="time-unit">{workTimeInSeconds ? 'seconds' : 'minutes'}</span>
+              <span className="time-unit">{workTimeInSeconds ? 'saniye' : 'dakika'}</span>
             </div>
 
             <div className="settings-group">
-              <label>Resting Time:</label>
+              <label>Dinlenme Süresi:</label>
               <input
                 type="text"
                 value={tempRestTime + (restTimeInSeconds ? 's' : '')}
                 onChange={(e) => handleRestTimeChange(e.target.value)}
                 placeholder="5 or 30s"
               />
-              <span className="time-unit">{restTimeInSeconds ? 'seconds' : 'minutes'}</span>
+              <span className="time-unit">{restTimeInSeconds ? 'saniye' : 'dakika'}</span>
             </div>
 
             <div className="settings-group">
-              <label>Sets:</label>
+              <label>Set Sayısı:</label>
               <input
                 type="number"
                 value={tempTotalSets}
@@ -796,10 +834,10 @@ function App() {
 
             <div className="modal-buttons">
               <button className="modal-btn cancel-btn" onClick={closeSettings}>
-                Cancel
+                İptal
               </button>
               <button className="modal-btn apply-btn" onClick={applySettings}>
-                Apply
+                Uygula
               </button>
             </div>
           </div>
@@ -854,7 +892,7 @@ function App() {
                           ></div>
                         </div>
                         <div className="day-label">
-                          {getDayName(day.date).slice(0, 3)}
+                          {getDayName(day.date)}
                         </div>
                         <div className="day-duration">
                           {formatDuration(day.duration)}
