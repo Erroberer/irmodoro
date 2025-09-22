@@ -221,7 +221,7 @@
 /* Theme Menu Styles */
 .theme-menu {
   position: fixed;
-  bottom: 80px;
+  bottom: 100px;
   right: 20px;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
@@ -229,8 +229,9 @@
   padding: 8px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  z-index: 1000;
+  z-index: 10000;
   animation: slideUp 0.3s ease-out;
+  color: #333;
 }
 
 @keyframes slideUp {
@@ -256,6 +257,7 @@
   transition: all 0.2s ease;
   width: 100%;
   min-width: 120px;
+  color: #333;
 }
 
 .theme-option:hover {
@@ -740,6 +742,7 @@
   min-width: 80px;
   position: relative;
   overflow: hidden;
+  color: #333;
 }
 
 /* Mobile Responsive - Mode Button */
@@ -999,7 +1002,7 @@
   justify-content: center;
   gap: 8px;
   margin-bottom: 15px;
-  color: #4ECDC4;
+  color: #333;
 }
 
 .statistics-btn:hover {
@@ -1474,6 +1477,7 @@
   height: 50px;
   position: relative;
   overflow: hidden;
+  color: #333;
 }
 
 /* Mobile Responsive - Control Button */
