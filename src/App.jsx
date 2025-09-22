@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import './App.css'
+import { database } from './utils/database'
 
 function App() {
   // Bip sesi fonksiyonu
@@ -81,6 +82,11 @@ function App() {
   // Mode state (work/rest)
   const [mode, setMode] = useState('work')
   
+  // Statistics modal state
+  const [showStatistics, setShowStatistics] = useState(false)
+  const [weeklyStats, setWeeklyStats] = useState([])
+  const [currentSession, setCurrentSession] = useState(null)
+  
   // Load tasks from localStorage
   const loadTasks = () => {
     const savedTasks = localStorage.getItem('pomodoroTasks');
@@ -122,6 +128,82 @@ function App() {
   useEffect(() => {
     setTasks(loadTasks());
   }, [theme]);
+
+  // Initialize database and Service Worker
+  useEffect(() => {
+    const initializeApp = async () => {
+      try {
+        // Initialize IndexedDB
+        await database.init();
+        
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.register('/sw.js');
+          console.log('Service Worker registered:', registration);
+        }
+        
+        // Load weekly statistics
+        const stats = await database.getWeeklyStats();
+        setWeeklyStats(stats);
+      } catch (error) {
+        console.error('App initialization error:', error);
+      }
+    };
+    
+    initializeApp();
+  }, []);
+
+  // Track session when timer starts/stops
+  useEffect(() => {
+    const handleSessionTracking = async () => {
+      if (isRunning && !isPaused && isWorkSession) {
+        // Start new session
+        if (!currentSession) {
+          const session = {
+            startTime: new Date(),
+            type: 'work'
+          };
+          setCurrentSession(session);
+          
+          // Notify Service Worker
+          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'START_SESSION',
+              session
+            });
+          }
+        }
+      } else if (currentSession && (!isRunning || isPaused || !isWorkSession)) {
+        // End current session
+        const endTime = new Date();
+        const duration = Math.floor((endTime - currentSession.startTime) / 1000);
+        
+        if (duration > 0) {
+          await database.addSession({
+            ...currentSession,
+            endTime,
+            duration
+          });
+          
+          // Update weekly stats
+          const stats = await database.getWeeklyStats();
+          setWeeklyStats(stats);
+          
+          // Notify Service Worker
+          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'END_SESSION',
+              session: { ...currentSession, endTime, duration }
+            });
+          }
+        }
+        
+        setCurrentSession(null);
+      }
+    };
+    
+    handleSessionTracking();
+  }, [isRunning, isPaused, isWorkSession, currentSession]);
   
   // Progress ring calculations
   const circumference = 2 * Math.PI * 130 // radius = 130
@@ -317,6 +399,38 @@ function App() {
     setShowSettings(true);
   };
 
+  // Statistics modal functions
+  const openStatistics = async () => {
+    try {
+      const stats = await database.getWeeklyStats();
+      setWeeklyStats(stats);
+      setShowStatistics(true);
+    } catch (error) {
+      console.error('Error loading statistics:', error);
+    }
+  };
+
+  const closeStatistics = () => {
+    setShowStatistics(false);
+  };
+
+  // Format duration for display
+  const formatDuration = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    
+    if (hours > 0) {
+      return `${hours}s ${minutes}d`;
+    }
+    return `${minutes}d`;
+  };
+
+  // Get day name in Turkish
+  const getDayName = (date) => {
+    const days = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+    return days[date.getDay()];
+  };
+
   const closeSettings = () => {
     setShowSettings(false);
   };
@@ -459,6 +573,19 @@ function App() {
         <div className="pomodoro-container">
           <div className="left-sidebar">
             <div className="mode-buttons">
+              <button 
+                className="statistics-btn"
+                onClick={openStatistics}
+                title="Haftalık İstatistikler"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 3v18h18"/>
+                  <path d="M18 17V9"/>
+                  <path d="M13 17V5"/>
+                  <path d="M8 17v-3"/>
+                </svg>
+                İstatistikler
+              </button>
               <button 
                 className={`mode-btn ${mode === 'work' ? 'active' : ''}`}
                 onClick={() => handleModeChange('work')}
@@ -674,6 +801,79 @@ function App() {
               <button className="modal-btn apply-btn" onClick={applySettings}>
                 Apply
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Statistics Modal */}
+      {showStatistics && (
+        <div className="modal-backdrop" onClick={closeStatistics}>
+          <div className="statistics-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Haftalık İstatistikler</h2>
+              <button className="close-btn" onClick={closeStatistics}>×</button>
+            </div>
+            
+            <div className="statistics-content">
+              <div className="stats-summary">
+                <div className="stat-card">
+                  <div className="stat-value">
+                    {formatDuration(weeklyStats.reduce((total, day) => total + day.duration, 0))}
+                  </div>
+                  <div className="stat-label">Toplam Çalışma</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">
+                    {weeklyStats.filter(day => day.duration > 0).length}
+                  </div>
+                  <div className="stat-label">Aktif Gün</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">
+                    {Math.round(weeklyStats.reduce((total, day) => total + day.duration, 0) / 7 / 60)}d
+                  </div>
+                  <div className="stat-label">Günlük Ortalama</div>
+                </div>
+              </div>
+
+              <div className="daily-stats">
+                <h3>Son 7 Gün</h3>
+                <div className="daily-chart">
+                  {weeklyStats.map((day, index) => {
+                    const maxDuration = Math.max(...weeklyStats.map(d => d.duration), 1);
+                    const height = Math.max((day.duration / maxDuration) * 100, 2);
+                    
+                    return (
+                      <div key={index} className="day-bar">
+                        <div className="bar-container">
+                          <div 
+                            className="bar" 
+                            style={{ height: `${height}%` }}
+                            title={`${getDayName(day.date)}: ${formatDuration(day.duration)}`}
+                          ></div>
+                        </div>
+                        <div className="day-label">
+                          {getDayName(day.date).slice(0, 3)}
+                        </div>
+                        <div className="day-duration">
+                          {formatDuration(day.duration)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {currentSession && (
+                <div className="current-session">
+                  <h3>Mevcut Oturum</h3>
+                  <div className="session-info">
+                    <span>Başlangıç: {currentSession.startTime.toLocaleTimeString('tr-TR')}</span>
+                    <span>Süre: {formatDuration(Math.floor((new Date() - currentSession.startTime) / 1000))}</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
