@@ -1236,7 +1236,7 @@
 }
 
 /* Light Theme Adjustments for Statistics */
-.statistics-modal {
+.app.light .statistics-modal {
   --modal-bg: rgba(255, 255, 255, 0.95);
   --header-bg: rgba(255, 255, 255, 0.98);
   --card-bg: rgba(255, 255, 255, 0.9);
@@ -1248,8 +1248,53 @@
   --text-secondary: #666;
 }
 
+.app.light .statistics-content {
+  background: rgba(255, 255, 255, 0.95);
+  color: #333;
+}
+
+.app.light .stat-card {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.app.light .stat-value {
+  color: #4ECDC4;
+}
+
+.app.light .stat-label {
+  color: #666;
+}
+
+.app.light .daily-chart {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.app.light .day-label {
+  color: #666;
+}
+
+.app.light .day-duration {
+  color: #333;
+}
+
+.app.light .current-session {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.app.light .current-session h3 {
+  color: #333;
+}
+
+.app.light .session-info span {
+  color: #666;
+}
+
 /* Dark Theme Adjustments for Statistics */
-[data-theme="dark"] .statistics-modal {
+.app.dark .statistics-modal {
   --modal-bg: #2a2a2a;
   --header-bg: #333;
   --card-bg: #333;
@@ -1261,7 +1306,52 @@
   --text-secondary: #ccc;
 }
 
-[data-theme="irem"] .statistics-modal {
+.app.dark .statistics-content {
+  background: #2a2a2a;
+  color: #fff;
+}
+
+.app.dark .stat-card {
+  background: #333;
+  border: 1px solid #444;
+  color: #fff;
+}
+
+.app.dark .stat-value {
+  color: #4ECDC4;
+}
+
+.app.dark .stat-label {
+  color: #ccc;
+}
+
+.app.dark .daily-chart {
+  background: #333;
+  border: 1px solid #444;
+}
+
+.app.dark .day-label {
+  color: #ccc;
+}
+
+.app.dark .day-duration {
+  color: #fff;
+}
+
+.app.dark .current-session {
+  background: #333;
+  border: 1px solid #444;
+}
+
+.app.dark .current-session h3 {
+  color: #fff;
+}
+
+.app.dark .session-info span {
+  color: #ccc;
+}
+
+.app.irem .statistics-modal {
   --modal-bg: #2d1b69;
   --header-bg: #3d2b79;
   --card-bg: #3d2b79;
@@ -1271,6 +1361,51 @@
   --primary-color: #ff6b9d;
   --secondary-color: #e55a8a;
   --text-secondary: #ddd;
+}
+
+.app.irem .statistics-content {
+  background: #2d1b69;
+  color: #fff;
+}
+
+.app.irem .stat-card {
+  background: #3d2b79;
+  border: 1px solid #4d3b89;
+  color: #fff;
+}
+
+.app.irem .stat-value {
+  color: #ff6b9d;
+}
+
+.app.irem .stat-label {
+  color: #ddd;
+}
+
+.app.irem .daily-chart {
+  background: #3d2b79;
+  border: 1px solid #4d3b89;
+}
+
+.app.irem .day-label {
+  color: #ddd;
+}
+
+.app.irem .day-duration {
+  color: #fff;
+}
+
+.app.irem .current-session {
+  background: #3d2b79;
+  border: 1px solid #4d3b89;
+}
+
+.app.irem .current-session h3 {
+  color: #fff;
+}
+
+.app.irem .session-info span {
+  color: #ddd;
 }
 
 .timer-display .timer-label {

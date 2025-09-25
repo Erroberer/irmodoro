@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import './App.css'
 import { database } from './utils/database'
+import { getUserID, saveUserProfile, FocusTracker } from './utils/userTracking'
 
 function App() {
   // Bip sesi fonksiyonu
@@ -88,6 +89,11 @@ function App() {
   const [currentSession, setCurrentSession] = useState(null)
   const [todayWorkTime, setTodayWorkTime] = useState(0)
   
+  // User tracking states
+  const [userID, setUserID] = useState(null)
+  const [focusTracker, setFocusTracker] = useState(null)
+  const [userStats, setUserStats] = useState(null)
+  
   // Load tasks from localStorage
   const loadTasks = () => {
     const savedTasks = localStorage.getItem('pomodoroTasks');
@@ -134,6 +140,17 @@ function App() {
   useEffect(() => {
     const initializeApp = async () => {
       try {
+        // Initialize user tracking system
+        const currentUserID = getUserID();
+        setUserID(currentUserID);
+        
+        // Save/update user profile
+        await saveUserProfile(currentUserID);
+        
+        // Initialize focus tracker
+        const tracker = new FocusTracker(currentUserID);
+        setFocusTracker(tracker);
+        
         // Initialize IndexedDB
         await database.init();
         
@@ -146,12 +163,21 @@ function App() {
         // Load weekly statistics
         const stats = await database.getWeeklyStats();
         setWeeklyStats(stats);
+        
+        console.log('Kullanıcı takip sistemi başlatıldı. User ID:', currentUserID);
       } catch (error) {
         console.error('App initialization error:', error);
       }
     };
     
     initializeApp();
+    
+    // Cleanup function
+    return () => {
+      if (focusTracker) {
+        focusTracker.destroy();
+      }
+    };
   }, []);
 
   // Track session when timer starts/stops
@@ -165,6 +191,11 @@ function App() {
             type: 'work'
           };
           setCurrentSession(session);
+          
+          // Start focus tracking
+          if (focusTracker) {
+            focusTracker.startSession();
+          }
           
           // Notify Service Worker
           if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
@@ -185,6 +216,11 @@ function App() {
             endTime,
             duration
           });
+          
+          // End focus tracking and save to Firebase
+          if (focusTracker) {
+            await focusTracker.endSession();
+          }
           
           // Update weekly stats
           const stats = await database.getWeeklyStats();
