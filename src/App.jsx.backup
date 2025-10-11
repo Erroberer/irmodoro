@@ -1,0 +1,941 @@
+import { useState, useEffect } from 'react'
+import './App.css'
+import { database } from './utils/database'
+import { getUserID, saveUserProfile, FocusTracker } from './utils/userTracking'
+
+function App() {
+  // Bip sesi fonksiyonu
+  const playBeep = () => {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime); // 800Hz frekans
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime); // Ses seviyesi
+      
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.2); // 0.2 saniye süre
+    } catch (error) {
+      console.log('Audio context not supported:', error);
+    }
+  };
+
+  // Load settings from localStorage or use defaults
+  const loadSettings = () => {
+    const savedSettings = localStorage.getItem('pomodoroSettings');
+    if (savedSettings) {
+      return JSON.parse(savedSettings);
+    }
+    return {
+      workTime: 25,
+      restTime: 5,
+      totalSets: 4,
+      isDarkMode: false
+    };
+  };
+
+  const settings = loadSettings();
+
+  // Timer states
+  const [timeLeft, setTimeLeft] = useState(settings.workTime * 60) // minutes in seconds
+  const [isRunning, setIsRunning] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
+  
+  // Settings states
+  const [workTime, setWorkTime] = useState(settings.workTime) // minutes
+  const [restTime, setRestTime] = useState(settings.restTime) // minutes
+  const [isWorkSession, setIsWorkSession] = useState(true)
+  const [showSettings, setShowSettings] = useState(false)
+  
+  // Temporary settings for modal
+  const [tempWorkTime, setTempWorkTime] = useState(settings.workTime)
+  const [tempRestTime, setTempRestTime] = useState(settings.restTime)
+  const [tempTotalSets, setTempTotalSets] = useState(settings.totalSets)
+  const [workTimeInSeconds, setWorkTimeInSeconds] = useState(false)
+  const [restTimeInSeconds, setRestTimeInSeconds] = useState(false)
+  
+  // Sets states
+  const [currentSet, setCurrentSet] = useState(1)
+  const [totalSets, setTotalSets] = useState(settings.totalSets)
+  const [completedSets, setCompletedSets] = useState(0)
+  
+  // Todo states
+  const [todos, setTodos] = useState([
+    { id: 1, text: 'Write prompt for AI', completed: false },
+    { id: 2, text: 'Prepare coffee', completed: false }
+  ])
+  const [newTodo, setNewTodo] = useState('')
+  
+  // Real-time clock
+  const [currentTime, setCurrentTime] = useState(new Date())
+  
+  // Theme state - now supports 3 themes: light, dark, irem
+  const [theme, setTheme] = useState(settings.theme || 'light')
+  const [showThemeMenu, setShowThemeMenu] = useState(false)
+  
+  // Backward compatibility
+  const isDarkMode = theme === 'dark'
+  
+  // Mode state (work/rest)
+  const [mode, setMode] = useState('work')
+  
+  // Statistics modal state
+  const [showStatistics, setShowStatistics] = useState(false)
+  const [weeklyStats, setWeeklyStats] = useState([])
+  const [currentSession, setCurrentSession] = useState(null)
+  const [todayWorkTime, setTodayWorkTime] = useState(0)
+  
+  // User tracking states
+  const [userID, setUserID] = useState(null)
+  const [focusTracker, setFocusTracker] = useState(null)
+  const [userStats, setUserStats] = useState(null)
+  
+  // Load tasks from localStorage
+  const loadTasks = () => {
+    const savedTasks = localStorage.getItem('pomodoroTasks');
+    let tasks = [];
+    
+    if (savedTasks) {
+      tasks = JSON.parse(savedTasks);
+    } else {
+      tasks = [];
+    }
+    
+    // Only add "fatihi aramak" task if current theme is "irem"
+    if (theme === 'irem') {
+      const fatiTask = tasks.find(task => task.text === 'fatihi aramak');
+      if (!fatiTask) {
+        tasks.unshift({ text: 'fatihi aramak', completed: false });
+      } else {
+        // Reset completion status if it exists
+        fatiTask.completed = false;
+      }
+    } else {
+      // Remove "fatihi aramak" task if theme is not "irem"
+      tasks = tasks.filter(task => task.text !== 'fatihi aramak');
+    }
+    
+    return tasks;
+  };
+
+  // Tasks state (replacing todos for new structure)
+  const [tasks, setTasks] = useState(loadTasks())
+  const [editingTaskIndex, setEditingTaskIndex] = useState(null)
+
+  // Save tasks to localStorage whenever tasks change
+  useEffect(() => {
+    localStorage.setItem('pomodoroTasks', JSON.stringify(tasks));
+  }, [tasks]);
+
+  // Reload tasks when theme changes
+  useEffect(() => {
+    setTasks(loadTasks());
+  }, [theme]);
+
+  // Initialize database and Service Worker
+  useEffect(() => {
+    const initializeApp = async () => {
+      try {
+        // Initialize user tracking system
+        const currentUserID = getUserID();
+        setUserID(currentUserID);
+        
+        // Save/update user profile
+        await saveUserProfile(currentUserID);
+        
+        // Initialize focus tracker
+        const tracker = new FocusTracker(currentUserID);
+        setFocusTracker(tracker);
+        
+        // Initialize IndexedDB
+        await database.init();
+        
+        // Register Service Worker
+        if ('serviceWorker' in navigator) {
+          const registration = await navigator.serviceWorker.register('/sw.js');
+          console.log('Service Worker registered:', registration);
+        }
+        
+        // Load weekly statistics
+        const stats = await database.getWeeklyStats();
+        setWeeklyStats(stats);
+        
+        console.log('Kullanıcı takip sistemi başlatıldı. User ID:', currentUserID);
+      } catch (error) {
+        console.error('App initialization error:', error);
+      }
+    };
+    
+    initializeApp();
+    
+    // Cleanup function
+    return () => {
+      if (focusTracker) {
+        focusTracker.destroy();
+      }
+    };
+  }, []);
+
+  // Track session when timer starts/stops
+  useEffect(() => {
+    const handleSessionTracking = async () => {
+      if (isRunning && !isPaused && isWorkSession) {
+        // Start new session
+        if (!currentSession) {
+          const session = {
+            startTime: new Date(),
+            type: 'work'
+          };
+          setCurrentSession(session);
+          
+          // Start focus tracking
+          if (focusTracker) {
+            focusTracker.startSession();
+          }
+          
+          // Notify Service Worker
+          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'START_SESSION',
+              session
+            });
+          }
+        }
+      } else if (currentSession && (!isRunning || isPaused || !isWorkSession)) {
+        // End current session
+        const endTime = new Date();
+        const duration = Math.floor((endTime - currentSession.startTime) / 1000);
+        
+        if (duration > 0) {
+          await database.addSession({
+            ...currentSession,
+            endTime,
+            duration
+          });
+          
+          // End focus tracking and save to Firebase
+          if (focusTracker) {
+            await focusTracker.endSession();
+          }
+          
+          // Update weekly stats
+          const stats = await database.getWeeklyStats();
+          setWeeklyStats(stats);
+          
+          // Notify Service Worker
+          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'END_SESSION',
+              session: { ...currentSession, endTime, duration }
+            });
+          }
+        }
+        
+        setCurrentSession(null);
+      }
+    };
+    
+    handleSessionTracking();
+  }, [isRunning, isPaused, isWorkSession, currentSession]);
+  
+  // Progress ring calculations
+  const circumference = 2 * Math.PI * 130 // radius = 130
+  const progress = ((isWorkSession ? workTime * 60 : restTime * 60) - timeLeft) / (isWorkSession ? workTime * 60 : restTime * 60)
+  const strokeDashoffset = circumference - (progress * circumference)
+
+  // Timer effect with real-time data processing
+  useEffect(() => {
+    let interval = null;
+    if (isRunning && !isPaused && timeLeft > 0) {
+      interval = setInterval(async () => {
+        setTimeLeft(timeLeft => timeLeft - 1);
+        
+        // Real-time data processing for work sessions
+        if (isWorkSession && currentSession) {
+          try {
+            // Update current session duration in real-time
+            const now = new Date();
+            const duration = Math.floor((now - currentSession.startTime) / 1000);
+            
+            // Update current session state
+            setCurrentSession(prev => ({
+              ...prev,
+              currentDuration: duration
+            }));
+            
+            // Update daily stats every 10 seconds to avoid too frequent updates
+            if (duration % 10 === 0) {
+              const today = new Date().toDateString();
+              await database.updateDailyStats(today);
+              
+              // Refresh weekly stats
+              const stats = await database.getWeeklyStats();
+              setWeeklyStats(stats);
+              
+              // Update today's work time for button display
+              const todayStats = stats.find(stat => stat.dateString === today);
+              setTodayWorkTime(todayStats ? todayStats.duration : 0);
+            }
+          } catch (error) {
+            console.error('Real-time data processing error:', error);
+          }
+        }
+      }, 1000);
+    } else if (timeLeft === 0) {
+      // Session completed
+      if (isWorkSession) {
+        // Work session completed
+        if (currentSet < totalSets) {
+          // Switch to rest break
+          playBeep(); // Bip sesi çal - work'ten rest'e geçiş
+          setIsWorkSession(false);
+          setTimeLeft(restTime * (restTimeInSeconds ? 1 : 60));
+          // Don't increment currentSet yet - we're in break between sets
+        } else {
+          // All sets completed
+          playBeep(); // Bip sesi çal - tüm setler tamamlandı
+          setIsRunning(false);
+          setCurrentSet(1);
+          setCompletedSets(0);
+          setIsWorkSession(true);
+          setTimeLeft(workTime * (workTimeInSeconds ? 1 : 60));
+        }
+      } else {
+        // Rest break completed, move to next work set
+        playBeep(); // Bip sesi çal - rest'ten work'e geçiş
+        setIsWorkSession(true);
+        setCurrentSet(prev => prev + 1);
+        setCompletedSets(prev => prev + 1);
+        setTimeLeft(workTime * (workTimeInSeconds ? 1 : 60));
+      }
+    }
+    return () => clearInterval(interval);
+  }, [isRunning, isPaused, timeLeft, isWorkSession, workTime, restTime, currentSet, totalSets, workTimeInSeconds, restTimeInSeconds]);
+
+  // Real-time clock effect
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Format time display
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Format real-time clock
+  const formatClock = (date) => {
+    return date.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      hour12: true
+    });
+  };
+
+  // Calculate progress percentage
+  const getProgress = () => {
+    const totalTime = isWorkSession ? workTime * 60 : restTime * 60;
+    return ((totalTime - timeLeft) / totalTime) * 100;
+  };
+
+  // Timer controls
+  const handleStart = () => {
+    setIsRunning(true);
+    setIsPaused(false);
+  };
+
+  const handleStop = () => {
+    setIsPaused(true);
+  };
+
+  const handleReset = () => {
+    setIsRunning(false);
+    setIsPaused(false);
+    setTimeLeft(isWorkSession ? workTime * 60 : restTime * 60);
+  };
+
+  // Settings
+  const handleSettingsSubmit = (e) => {
+    e.preventDefault();
+    setTimeLeft(isWorkSession ? workTime * 60 : restTime * 60);
+    setShowSettings(false);
+  };
+
+  // Todo functions
+  const addTodo = () => {
+    if (newTodo.trim()) {
+      setTodos([...todos, { id: Date.now(), text: newTodo, completed: false }]);
+      setNewTodo('');
+    }
+  };
+
+  const toggleTodo = (id) => {
+    setTodos(todos.map(todo => 
+      todo.id === id ? { ...todo, completed: !todo.completed } : todo
+    ));
+  };
+
+  const deleteTodo = (id) => {
+    setTodos(todos.filter(todo => todo.id !== id));
+  };
+
+  // Theme functions
+  const toggleThemeMenu = () => {
+    setShowThemeMenu(!showThemeMenu);
+  };
+
+  const selectTheme = (selectedTheme) => {
+    setTheme(selectedTheme);
+    setShowThemeMenu(false);
+    
+    // Save theme preference to localStorage
+    const currentSettings = JSON.parse(localStorage.getItem('pomodoroSettings') || '{}');
+    const updatedSettings = {
+      ...currentSettings,
+      workTime: workTime,
+      restTime: restTime,
+      totalSets: totalSets,
+      theme: selectedTheme,
+      isDarkMode: selectedTheme === 'dark' // backward compatibility
+    };
+    localStorage.setItem('pomodoroSettings', JSON.stringify(updatedSettings));
+  };
+
+  // Legacy theme toggle for backward compatibility
+  const toggleTheme = () => {
+    const newTheme = theme === 'light' ? 'dark' : 'light';
+    selectTheme(newTheme);
+  };
+
+  // Mode switching with instant teleportation
+  const handleModeChange = (newMode) => {
+    setMode(newMode);
+    const newIsWorkSession = newMode === 'work';
+    setIsWorkSession(newIsWorkSession);
+    
+    // Set time based on current session type
+    if (newIsWorkSession) {
+      setTimeLeft(workTime * (workTimeInSeconds ? 1 : 60));
+    } else {
+      setTimeLeft(restTime * (restTimeInSeconds ? 1 : 60));
+    }
+    
+    // Don't reset running state - allow instant switching during active timer
+  };
+
+  // Timer controls for new structure
+  const startTimer = () => {
+    setIsRunning(true);
+    setIsPaused(false);
+  };
+
+  const pauseTimer = () => {
+    setIsRunning(false);
+    setIsPaused(true);
+  };
+
+  const resetTimer = () => {
+    setIsRunning(false);
+    setIsPaused(false);
+    setCurrentSet(1);
+    setCompletedSets(0);
+    setIsWorkSession(true);
+    setTimeLeft(workTime * (workTimeInSeconds ? 1 : 60));
+  };
+
+  const toggleTimer = () => {
+    if (isRunning) {
+      pauseTimer();
+    } else {
+      startTimer();
+    }
+  };
+
+  // Settings modal functions
+  const openSettings = () => {
+    setTempWorkTime(workTime);
+    setTempRestTime(restTime);
+    setTempTotalSets(totalSets);
+    setShowSettings(true);
+  };
+
+  // Statistics modal functions
+  const openStatistics = async () => {
+    try {
+      const stats = await database.getWeeklyStats();
+      setWeeklyStats(stats);
+      
+      // Update today's work time
+      const today = new Date().toDateString();
+      const todayStats = stats.find(stat => stat.dateString === today);
+      setTodayWorkTime(todayStats ? todayStats.duration : 0);
+      
+      setShowStatistics(true);
+    } catch (error) {
+      console.error('Error loading statistics:', error);
+    }
+  };
+
+  const closeStatistics = () => {
+    setShowStatistics(false);
+  };
+
+  // Format duration for display
+  const formatDuration = (seconds) => {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    
+    if (hours > 0) {
+      return `${hours}s ${minutes}d`;
+    }
+    return `${minutes}d`;
+  };
+
+  // Get day name in Turkish with short abbreviations
+  const getDayName = (date) => {
+    const days = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+    return days[date.getDay()];
+  };
+
+  const closeSettings = () => {
+    setShowSettings(false);
+  };
+
+  const applySettings = () => {
+    setWorkTime(tempWorkTime);
+    setRestTime(tempRestTime);
+    setTotalSets(tempTotalSets);
+    
+    // Save settings to localStorage
+    const settingsToSave = {
+      workTime: tempWorkTime,
+      restTime: tempRestTime,
+      totalSets: tempTotalSets,
+      isDarkMode: isDarkMode
+    };
+    localStorage.setItem('pomodoroSettings', JSON.stringify(settingsToSave));
+    
+    // Reset timer with new values
+    if (isWorkSession) {
+      setTimeLeft(tempWorkTime * (workTimeInSeconds ? 1 : 60));
+    } else {
+      setTimeLeft(tempRestTime * (restTimeInSeconds ? 1 : 60));
+    }
+    
+    setShowSettings(false);
+  };
+
+  const handleWorkTimeChange = (value) => {
+    // Check if value ends with 's' for seconds
+    const isSeconds = value.toString().toLowerCase().endsWith('s');
+    const numericValue = parseInt(value.replace(/s$/i, '')) || 0;
+    
+    setWorkTimeInSeconds(isSeconds);
+    setTempWorkTime(numericValue);
+  };
+
+  const handleRestTimeChange = (value) => {
+    // Check if value ends with 's' for seconds
+    const isSeconds = value.toString().toLowerCase().endsWith('s');
+    const numericValue = parseInt(value.replace(/s$/i, '')) || 0;
+    
+    setRestTimeInSeconds(isSeconds);
+    setTempRestTime(numericValue);
+  };
+
+  // Task management functions
+  const addTask = () => {
+    if (tasks.length < 4) {
+      const newTaskIndex = tasks.length;
+      setTasks([...tasks, { text: '', completed: false }]);
+      // Automatically focus on the new task input
+      setTimeout(() => {
+        setEditingTaskIndex(newTaskIndex);
+      }, 100);
+    }
+  };
+
+  const updateTask = (index, newText) => {
+    const updatedTasks = [...tasks];
+    updatedTasks[index].text = newText;
+    setTasks(updatedTasks);
+  };
+
+  const toggleTask = (index) => {
+    const updatedTasks = [...tasks];
+    updatedTasks[index].completed = !updatedTasks[index].completed;
+    setTasks(updatedTasks);
+  };
+
+  const deleteTask = (index) => {
+    const taskToDelete = tasks[index];
+    
+    // Prevent deletion of "fatihi aramak" task only in irem theme
+    if (taskToDelete && taskToDelete.text === 'fatihi aramak' && theme === 'irem') {
+      return; // Don't delete this task in irem theme
+    }
+    
+    const updatedTasks = tasks.filter((_, i) => i !== index);
+    setTasks(updatedTasks);
+    // Reset editing state if we're deleting the task being edited
+    if (editingTaskIndex === index) {
+      setEditingTaskIndex(null);
+    } else if (editingTaskIndex > index) {
+      setEditingTaskIndex(editingTaskIndex - 1);
+    }
+  };
+
+  const startEditingTask = (index) => {
+    setEditingTaskIndex(index);
+  };
+
+  const finishEditingTask = () => {
+    setEditingTaskIndex(null);
+  };
+
+  return (
+    <div className={`app ${theme}`}>
+      {/* Fixed top center sets indicator */}
+      <div className="sets-indicator-fixed">
+        <div className="sets-breaks-container">
+          {Array.from({ length: totalSets }, (_, index) => {
+            const setNum = index + 1;
+            return (
+              <div key={setNum} className="set-break-group">
+                <div 
+                  className={`set-box ${
+                    currentSet === setNum && isWorkSession ? 'active' : ''
+                  } ${
+                    currentSet > setNum || (currentSet === setNum && !isWorkSession) ? 'completed' : ''
+                  }`}
+                >
+                  {setNum}
+                </div>
+                {setNum < totalSets && (
+                  <div 
+                    className={`break-box ${
+                      currentSet === setNum && !isWorkSession ? 'active' : ''
+                    } ${
+                      currentSet > setNum ? 'completed' : ''
+                    }`}
+                  >
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Full width header */}
+      <header className="app-header">
+        <div className="clock">
+          <span className="clock-pill">{formatClock(currentTime)}</span>
+        </div>
+      </header>
+
+      {/* Main content area - three column layout */}
+      <main className="main-content">
+        {/* Left column - Tasks */}
+        <div className="left-column">
+          <div className="tasks-section">
+            <div className="tasks-header">
+              <h3>Görevler</h3>
+              {tasks.length < 4 && (
+                <button className="add-task-btn" onClick={addTask}>+</button>
+              )}
+            </div>
+            <div className="tasks-list">
+              {tasks.map((task, index) => (
+                <div key={index} className="task-item">
+                  <input
+                    type="checkbox"
+                    checked={task.completed}
+                    onChange={() => toggleTask(index)}
+                    className="task-checkbox"
+                  />
+                  {editingTaskIndex === index ? (
+                    <input
+                      type="text"
+                      value={task.text}
+                      onChange={(e) => updateTask(index, e.target.value)}
+                      onBlur={finishEditingTask}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          finishEditingTask();
+                        }
+                      }}
+                      className="task-input-edit"
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      className={`task-text ${task.completed ? 'completed' : ''}`}
+                      onClick={() => startEditingTask(index)}
+                    >
+                      {task.text || 'Görev ekle...'}
+                    </span>
+                  )}
+                  {/* Only show delete button for tasks other than "fatihi aramak" in irem theme */}
+                  {!(task.text === 'fatihi aramak' && theme === 'irem') && (
+                    <button
+                      className="delete-task-btn"
+                      onClick={() => deleteTask(index)}
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Center column - Timer */}
+        <div className="center-column">
+          <div className="timer-container">
+            {/* Mode selector */}
+            <div className="mode-selector">
+              <button 
+                className={`mode-btn ${mode === 'work' ? 'active' : ''}`}
+                onClick={() => handleModeChange('work')}
+              >
+                Çalışma
+              </button>
+              <button 
+                className={`mode-btn ${mode === 'rest' ? 'active' : ''}`}
+                onClick={() => handleModeChange('rest')}
+              >
+                Dinlenme
+              </button>
+            </div>
+
+            {/* Timer display */}
+            <div className="timer-display">
+              <svg className="progress-ring" width="300" height="300">
+                <circle
+                  className="progress-ring-background"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                  fill="transparent"
+                  r="130"
+                  cx="150"
+                  cy="150"
+                />
+                <circle
+                  className="progress-ring-progress"
+                  stroke="currentColor"
+                  strokeWidth="8"
+                  fill="transparent"
+                  r="130"
+                  cx="150"
+                  cy="150"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={strokeDashoffset}
+                  transform="rotate(-90 150 150)"
+                />
+              </svg>
+              <div className="timer-text">
+                <div className="time">{formatTime(timeLeft)}</div>
+                <div className="session-type">
+                  {isWorkSession ? 'Çalışma' : 'Dinlenme'}
+                </div>
+              </div>
+            </div>
+
+            {/* Timer controls */}
+            <div className="timer-controls">
+              <button 
+                className="control-btn primary"
+                onClick={toggleTimer}
+              >
+                {isRunning ? 'Duraklat' : 'Başlat'}
+              </button>
+              <button 
+                className="control-btn secondary"
+                onClick={resetTimer}
+              >
+                Sıfırla
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Right column - Settings and Stats */}
+        <div className="right-column">
+          <div className="controls-section">
+            {/* Theme selector */}
+            <div className="theme-selector">
+              <button 
+                className="theme-btn"
+                onClick={toggleThemeMenu}
+              >
+                🎨
+              </button>
+              {showThemeMenu && (
+                <div className="theme-menu">
+                  <button 
+                    className={`theme-option ${theme === 'light' ? 'active' : ''}`}
+                    onClick={() => selectTheme('light')}
+                  >
+                    ☀️ Açık
+                  </button>
+                  <button 
+                    className={`theme-option ${theme === 'dark' ? 'active' : ''}`}
+                    onClick={() => selectTheme('dark')}
+                  >
+                    🌙 Koyu
+                  </button>
+                  <button 
+                    className={`theme-option ${theme === 'irem' ? 'active' : ''}`}
+                    onClick={() => selectTheme('irem')}
+                  >
+                    💜 İrem
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Settings button */}
+            <button 
+              className="settings-btn"
+              onClick={openSettings}
+            >
+              ⚙️
+            </button>
+
+            {/* Statistics button */}
+            <button 
+              className="statistics-btn"
+              onClick={openStatistics}
+            >
+              📊 {formatDuration(todayWorkTime)}
+            </button>
+          </div>
+        </div>
+      </main>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="modal-overlay" onClick={closeSettings}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Ayarlar</h2>
+              <button className="close-btn" onClick={closeSettings}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="setting-group">
+                <label>Çalışma Süresi:</label>
+                <input
+                  type="text"
+                  value={tempWorkTime + (workTimeInSeconds ? 's' : '')}
+                  onChange={(e) => handleWorkTimeChange(e.target.value)}
+                  placeholder="25 (dakika) veya 30s (saniye)"
+                />
+                <small>Dakika için sadece sayı, saniye için sayı + 's' yazın</small>
+              </div>
+              <div className="setting-group">
+                <label>Dinlenme Süresi:</label>
+                <input
+                  type="text"
+                  value={tempRestTime + (restTimeInSeconds ? 's' : '')}
+                  onChange={(e) => handleRestTimeChange(e.target.value)}
+                  placeholder="5 (dakika) veya 30s (saniye)"
+                />
+                <small>Dakika için sadece sayı, saniye için sayı + 's' yazın</small>
+              </div>
+              <div className="setting-group">
+                <label>Toplam Set Sayısı:</label>
+                <input
+                  type="number"
+                  value={tempTotalSets}
+                  onChange={(e) => setTempTotalSets(parseInt(e.target.value) || 1)}
+                  min="1"
+                  max="10"
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn secondary" onClick={closeSettings}>İptal</button>
+              <button className="btn primary" onClick={applySettings}>Kaydet</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Statistics Modal */}
+      {showStatistics && (
+        <div className="modal-overlay" onClick={closeStatistics}>
+          <div className="statistics-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Haftalık İstatistikler</h2>
+              <button className="close-btn" onClick={closeStatistics}>×</button>
+            </div>
+            <div className="statistics-content">
+              {/* Summary Cards */}
+              <div className="stats-summary">
+                <div className="stat-card">
+                  <div className="stat-value">{formatDuration(weeklyStats.reduce((total, day) => total + day.duration, 0))}</div>
+                  <div className="stat-label">Toplam Çalışma</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{weeklyStats.filter(day => day.duration > 0).length}</div>
+                  <div className="stat-label">Aktif Gün</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{formatDuration(weeklyStats.reduce((total, day) => total + day.duration, 0) / 7)}</div>
+                  <div className="stat-label">Günlük Ortalama</div>
+                </div>
+              </div>
+
+              {/* Daily Chart */}
+              <div className="daily-stats">
+                <h3>Son 7 Gün</h3>
+                <div className="daily-chart">
+                  {weeklyStats.map((day, index) => {
+                    const maxDuration = Math.max(...weeklyStats.map(d => d.duration), 1);
+                    const height = (day.duration / maxDuration) * 100;
+                    
+                    return (
+                      <div key={index} className="day-bar">
+                        <div className="bar-container">
+                          <div 
+                            className="bar" 
+                            style={{ height: `${height}%` }}
+                          ></div>
+                        </div>
+                        <div className="day-label">{getDayName(day.date)}</div>
+                        <div className="day-duration">{formatDuration(day.duration)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Current Session Info */}
+              {currentSession && (
+                <div className="current-session">
+                  <h3>Mevcut Oturum</h3>
+                  <div className="session-info">
+                    <span>Başlangıç: {currentSession.startTime.toLocaleTimeString()}</span>
+                    <span>Süre: {formatDuration(currentSession.currentDuration || 0)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App
